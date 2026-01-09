@@ -3,267 +3,284 @@ import numpy as np
 from PIL import Image
 import pickle
 import os
+import time
+import torch
+import torch.nn.functional as F
+import sys
 
-# CIFAR-10 类别名称
-CIFAR10_CLASSES = ['airplane', 'automobile', 'bird', 'cat', 'deer', 
-                   'dog', 'frog', 'horse', 'ship', 'truck']
+# 添加项目根目录到路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from models.Airbench96 import CifarNet96
 
-# 中文类别名称
-CIFAR10_CLASSES_CN = ['飞机', '汽车', '鸟', '猫', '鹿', 
-                      '狗', '青蛙', '马', '船', '卡车']
-
-# 页面配置
+# -----------------------------------------------------------------------------
+# 1. 页面配置
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="CIFAR-10图像分类器",
-    page_icon="🖼️",
-    layout="wide"
+    page_title="CIFAR-10 智能分类系统",
+    layout="centered",
+    initial_sidebar_state="expanded"
 )
 
-# 自定义CSS样式
+# -----------------------------------------------------------------------------
+# 2. 核心 CSS 样式 (隐藏原生顶栏 + 自定义新顶栏)
+# -----------------------------------------------------------------------------
 st.markdown("""
 <style>
-    .main-title {
-        text-align: center;
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1E88E5;
-        margin-bottom: 10px;
+    /* 1. 隐藏 Streamlit 原生顶栏 */
+    header[data-testid="stHeader"] {
+        display: none;
     }
+    
+    /* 2. 调整主区域上边距 */
+    .block-container {
+        padding-top: 80px !important;
+    }
+
+    /* 3. 自定义顶部导航栏样式 */
+    .custom-navbar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 60px;
+        background-color: #ffffff;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        z-index: 999999;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 40px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    /* 左侧：项目名与个人信息 */
+    .navbar-left {
+        display: flex;
+        align-items: center;
+        gap: 30px;
+    }
+    .project-logo {
+        font-size: 18px;
+        font-weight: 700;
+        color: #0052D9; /* 腾讯蓝 */
+        letter-spacing: 0.5px;
+    }
+    
+    /* 学生信息胶囊样式 */
     .student-info {
-        text-align: center;
-        font-size: 1.2rem;
-        color: #666;
-        margin-bottom: 30px;
+        display: flex;
+        gap: 15px;
+        font-size: 13px;
+        color: #555;
+        background-color: #F5F7FA;
+        padding: 6px 12px;
+        border-radius: 4px;
+        border: 1px solid #E1E4E8;
     }
-    .section-title {
-        font-size: 1.8rem;
-        font-weight: bold;
-        color: #1E88E5;
-        margin-bottom: 15px;
+    .info-label {
+        color: #888;
+        margin-right: 4px;
     }
-    .result-text {
-        font-size: 1.5rem;
-        font-weight: bold;
+    .info-value {
+        font-weight: 600;
         color: #333;
     }
-    .stImage > img {
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+
+    /* 右侧：功能区 */
+    .navbar-right {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+    }
+    .nav-link {
+        color: #666;
+        text-decoration: none !important;
+        font-size: 14px;
+        cursor: pointer;
+        transition: color 0.2s;
+    }
+    .nav-link:hover {
+        color: #0052D9;
+        text-decoration: none !important;
+    }
+    .nav-link:visited, .nav-link:active, .nav-link:focus {
+        text-decoration: none !important;
+    }
+    /* 注册按钮样式 */
+    .nav-btn-register {
+        background-color: #0052D9;
+        color: white !important;
+        padding: 6px 18px;
+        border-radius: 2px;
+        text-decoration: none !important;
+        font-size: 13px;
+        font-weight: 500;
+        transition: background-color 0.2s;
+    }
+    .nav-btn-register:hover {
+        background-color: #003C9D;
+        text-decoration: none !important;
+    }
+
+    /* 全局背景与卡片 */
+    .stApp {
+        background-color: #F7F9FC;
+    }
+    .main-card {
+        background-color: #FFFFFF;
+        border-radius: 8px;
+        padding: 40px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+        margin-bottom: 20px;
+        border: 1px solid #EBEEF5;
+    }
+    
+    /* 预测结果框优化 - 纯净风格 */
+    .prediction-box {
+        background-color: #F2F5FF;
+        border-left: 4px solid #0052D9;
+        padding: 20px;
+        margin-top: 20px;
+        border-radius: 0 4px 4px 0;
+    }
+    .pred-title {
+        color: #333;
+        font-size: 16px;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+    .pred-value {
+        color: #0052D9;
+        font-size: 24px;
+        font-weight: bold;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# 标题
-st.markdown('<h1 class="main-title">CIFAR-10数据训练10分类图像分类器demo</h1>', unsafe_allow_html=True)
-st.markdown('<p class="student-info">学号：23101204，姓名：侯舒扬</p>', unsafe_allow_html=True)
+# -----------------------------------------------------------------------------
+# 3. 注入 HTML 自定义导航栏 (纯文字版)
+# -----------------------------------------------------------------------------
+st.markdown("""
+<nav class="custom-navbar">
+    <div class="navbar-left">
+        <div class="project-logo">
+            CIFAR-10 图像分类系统
+        </div>
+        <div class="student-info">
+            <span><span class="info-label">姓名</span><span class="info-value">侯舒扬</span></span>
+            <span style="color:#DDD">|</span>
+            <span><span class="info-label">学号</span><span class="info-value">23101204</span></span>
+        </div>
+    </div>
+    <div class="navbar-right">
+        <a class="nav-link" target="_self">帮助文档</a>
+        <a class="nav-link" target="_self">登录</a>
+        <a class="nav-btn-register" target="_self">注册账号</a>
+    </div>
+</nav>
+""", unsafe_allow_html=True)
 
-# 分割线
-st.markdown("---")
+# -----------------------------------------------------------------------------
+# 4. 逻辑代码
+# -----------------------------------------------------------------------------
+
+# CIFAR-10 类别
+CIFAR10_CLASSES = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+CIFAR10_CLASSES_CN = ['飞机', '汽车', '鸟', '猫', '鹿', '狗', '青蛙', '马', '船', '卡车']
+
+# 加载模型
+@st.cache_resource
+def load_model():
+    """加载 CifarNet96 模型"""
+    model_path = 'checkpoints/best_airbench96_cifar10.pth'
+    if not os.path.exists(model_path):
+        return None
+    
+    # 创建模型实例
+    model = CifarNet96()
+    
+    # 加载权重
+    checkpoint = torch.load(model_path, map_location='cpu')
+    model.load_state_dict(checkpoint)
+    model.eval()
+    
+    return model
 
 def preprocess_image(image, target_size=(32, 32)):
-    """预处理图像为模型输入格式"""
-    # 调整大小为32x32
-    img = image.resize(target_size)
-    # 转换为RGB（如果是RGBA则去除alpha通道）
-    if img.mode != 'RGB':
-        img = img.convert('RGB')
-    # 转换为numpy数组并归一化
-    img_array = np.array(img).astype('float32') / 255.0
-    return img, img_array
+    """预处理图像"""
+    if image.mode != 'RGB': 
+        image = image.convert('RGB')
+    display_img = image.copy()
+    img_small = image.resize(target_size)
+    img_array = np.array(img_small).astype('float32') / 255.0
+    return display_img, img_array
 
-def load_model():
-    """加载保存的模型"""
-    model_path = 'best_model.pkl'
-    if os.path.exists(model_path):
-        with open(model_path, 'rb') as f:
-            model = pickle.load(f)
-        return model, 'sklearn'
-    
-    # 尝试加载ResNet18 PyTorch模型
-    pytorch_model_path = 'best_resnet18_cifar10.pth'
-    if os.path.exists(pytorch_model_path):
-        try:
-            import torch
-            import torch.nn as nn
-            import torch.nn.functional as F
-            
-            # 自定义ResNet18 for CIFAR-10
-            class BasicBlock(nn.Module):
-                expansion = 1
-                def __init__(self, in_planes, planes, stride=1):
-                    super(BasicBlock, self).__init__()
-                    self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-                    self.bn1 = nn.BatchNorm2d(planes)
-                    self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-                    self.bn2 = nn.BatchNorm2d(planes)
-                    self.shortcut = nn.Sequential()
-                    if stride != 1 or in_planes != self.expansion * planes:
-                        self.shortcut = nn.Sequential(
-                            nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
-                            nn.BatchNorm2d(self.expansion * planes)
-                        )
-                def forward(self, x):
-                    out = F.relu(self.bn1(self.conv1(x)))
-                    out = self.bn2(self.conv2(out))
-                    out += self.shortcut(x)
-                    out = F.relu(out)
-                    return out
-            
-            class ResNet(nn.Module):
-                def __init__(self, block, num_blocks, num_classes=10):
-                    super(ResNet, self).__init__()
-                    self.in_planes = 64
-                    self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-                    self.bn1 = nn.BatchNorm2d(64)
-                    self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
-                    self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
-                    self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
-                    self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
-                    self.linear = nn.Linear(512 * block.expansion, num_classes)
-                def _make_layer(self, block, planes, num_blocks, stride):
-                    strides = [stride] + [1] * (num_blocks - 1)
-                    layers = []
-                    for stride in strides:
-                        layers.append(block(self.in_planes, planes, stride))
-                        self.in_planes = planes * block.expansion
-                    return nn.Sequential(*layers)
-                def forward(self, x):
-                    out = F.relu(self.bn1(self.conv1(x)))
-                    out = self.layer1(out)
-                    out = self.layer2(out)
-                    out = self.layer3(out)
-                    out = self.layer4(out)
-                    out = F.avg_pool2d(out, 4)
-                    out = out.view(out.size(0), -1)
-                    out = self.linear(out)
-                    return out
-            
-            model = ResNet(BasicBlock, [2, 2, 2, 2])
-            model.load_state_dict(torch.load(pytorch_model_path, map_location='cpu'))
-            model.eval()
-            return model, 'pytorch'
-        except Exception as e:
-            st.warning(f"加载PyTorch模型失败: {e}")
-    
-    return None, None
-
-def predict_sklearn(model, img_array):
-    """使用sklearn模型进行预测"""
-    # 展平图像数据
-    img_flat = img_array.reshape(1, -1)
-    # 预测
-    prediction = model.predict(img_flat)[0]
-    # 获取预测概率（如果模型支持）
-    try:
-        proba = model.predict_proba(img_flat)[0]
-    except:
-        proba = None
-    return prediction, proba
-
-def predict_pytorch(model, img_array):
-    """使用PyTorch模型进行预测"""
-    import torch
-    import torch.nn.functional as F
-    
-    # 转换为PyTorch张量 (N, C, H, W)
-    img_tensor = torch.from_numpy(img_array).float()
-    img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0)  # (1, 3, 32, 32)
+def predict(model, img_array):
+    """使用模型进行预测"""
+    # 转换为 tensor: (H, W, C) -> (1, C, H, W)
+    img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).unsqueeze(0)
+    img_tensor = img_tensor.half()  # CifarNet96 使用半精度
     
     with torch.no_grad():
         outputs = model(img_tensor)
-        proba = F.softmax(outputs, dim=1).numpy()[0]
+        proba = F.softmax(outputs.float(), dim=1).numpy()[0]
         prediction = np.argmax(proba)
     
     return prediction, proba
 
-# 创建两列布局
-col1, col2 = st.columns(2)
+# 侧边栏 (去除 Emoji)
+with st.sidebar:
+    st.markdown("### 参数设置")
+    top_k = st.slider("显示前 K 个结果", 1, 10, 5)
+    conf_threshold = st.slider("置信度阈值", 0.0, 1.0, 0.01)
+    
+    st.markdown("---")
+    st.markdown("**系统说明**")
+    st.caption("本系统基于 EVA 模型构建，用于 CIFAR-10 数据集的图像分类任务。\n\n天津科技大学大学 人工智能学院")
 
-with col1:
-    st.markdown('<h2 class="section-title">上传图像</h2>', unsafe_allow_html=True)
-    st.write("Upload an image")
-    
-    # 文件上传组件
-    uploaded_file = st.file_uploader(
-        "拖拽文件到此处或点击浏览",
-        type=['png', 'jpg', 'jpeg', 'bmp', 'gif'],
-        help="支持 PNG, JPG, JPEG, BMP, GIF 格式，建议上传32x32的图像以获得最佳效果"
-    )
-    
-    if uploaded_file is not None:
-        # 显示上传的图像
-        image = Image.open(uploaded_file)
-        st.image(image, caption=f'{uploaded_file.name}', use_column_width=True)
-        
-        # 显示图像信息
-        st.info(f"图像尺寸: {image.size[0]} x {image.size[1]} 像素")
+# 主界面内容
+st.markdown('<h2 style="color:#333; font-weight:600; margin-bottom:10px;">图像分类任务演示</h2>', unsafe_allow_html=True)
+st.markdown('<p style="color:#666; font-size:14px; margin-bottom: 30px;">请上传本地图像文件，系统将自动进行预处理与模型推断。</p>', unsafe_allow_html=True)
 
-with col2:
-    st.markdown('<h2 class="section-title">分类结果</h2>', unsafe_allow_html=True)
+uploaded_file = st.file_uploader("上传图片文件 (JPG/PNG)", type=['png', 'jpg', 'jpeg', 'bmp'])
+
+# 加载模型
+model = load_model()
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    display_img, img_array = preprocess_image(image)
     
-    if uploaded_file is not None:
-        # 预处理图像
-        processed_img, img_array = preprocess_image(image)
-        
-        # 显示预处理后的图像
-        st.image(processed_img, caption="预处理后的图像 (32x32)", width=200)
-        
-        # 加载模型并预测
-        model, model_type = load_model()
-        
-        if model is not None:
-            if model_type == 'sklearn':
-                prediction, proba = predict_sklearn(model, img_array)
-            else:
-                prediction, proba = predict_pytorch(model, img_array)
-            
-            # 显示预测结果
-            st.markdown(f'<p class="result-text">预测类别: {CIFAR10_CLASSES[prediction]} ({CIFAR10_CLASSES_CN[prediction]})</p>', unsafe_allow_html=True)
-            
-            # 如果有概率，显示置信度
-            if proba is not None:
-                st.write(f"置信度: {proba[prediction]*100:.2f}%")
-                
-                # 显示前5个预测结果
-                st.subheader("Top-5 预测结果")
-                top5_idx = np.argsort(proba)[::-1][:5]
-                for idx in top5_idx:
-                    st.progress(float(proba[idx]))
-                    st.write(f"{CIFAR10_CLASSES[idx]} ({CIFAR10_CLASSES_CN[idx]}): {proba[idx]*100:.2f}%")
-        else:
-            st.warning("⚠️ 未找到训练好的模型文件！")
-            st.info("""
-            请先训练模型并保存：
-            - sklearn模型保存为 `best_model.pkl`
-            - PyTorch模型保存为 `best_model.pth`
-            
-            保存模型示例代码：
-            ```python
-            # sklearn模型
-            import pickle
-            with open('best_model.pkl', 'wb') as f:
-                pickle.dump(model, f)
-            
-            # PyTorch模型
-            torch.save(model.state_dict(), 'best_model.pth')
-            ```
-            """)
-            
-            # 显示演示结果（随机预测）
-            st.subheader("演示模式 (随机预测)")
-            random_pred = np.random.randint(0, 10)
-            random_proba = np.random.dirichlet(np.ones(10))
-            
-            st.markdown(f'<p class="result-text">预测类别: {CIFAR10_CLASSES[random_pred]} ({CIFAR10_CLASSES_CN[random_pred]})</p>', unsafe_allow_html=True)
-            st.write(f"置信度: {random_proba[random_pred]*100:.2f}%")
+    if model is not None:
+        with st.spinner('正在识别...'):
+            prediction, proba = predict(model, img_array)
     else:
-        st.info("请在左侧上传一张图像进行分类")
+        st.error("未找到模型文件 checkpoints/best_airbench96_cifar10.pth")
+        prediction = 0
+        proba = np.zeros(10)
+        proba[0] = 1.0
 
-# 页脚
-st.markdown("---")
-st.markdown("""
-<div style="text-align: center; color: #888; padding: 20px;">
-    <p>CIFAR-10 图像分类器 | 机器学习课程设计</p>
-    <p>支持的类别：飞机、汽车、鸟、猫、鹿、狗、青蛙、马、船、卡车</p>
-</div>
-""", unsafe_allow_html=True)
+    st.markdown("---")
+    col1, col2 = st.columns([1, 1.5], gap="large")
+    
+    with col1:
+        st.markdown("**原始图像**")
+        st.image(display_img, use_container_width=True)
+    
+    with col2:
+        st.markdown("**识别结果**")
+        st.markdown(f"""
+        <div class="prediction-box">
+            <div class="pred-title">预测类别</div>
+            <div class="pred-value">{CIFAR10_CLASSES_CN[prediction]} <span style="font-size:16px;color:#666;font-weight:400">({CIFAR10_CLASSES[prediction]})</span></div>
+            <div style="margin-top:8px; font-size:13px; color:#666;">置信度：{(proba[prediction]*100):.2f}%</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>**概率分布**", unsafe_allow_html=True)
+        # 进度条
+        for i in np.argsort(proba)[::-1][:top_k]:
+             # 简单的进度显示
+             val = float(proba[i])
+             if val > 0.01: # 只显示有意义的
+                 st.progress(val, text=f"{CIFAR10_CLASSES_CN[i]} ({val*100:.1f}%)")
