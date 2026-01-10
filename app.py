@@ -1,16 +1,17 @@
+import warnings
+warnings.filterwarnings('ignore')
+
 import streamlit as st
 import numpy as np
 from PIL import Image
-import pickle
 import os
-import time
 import torch
 import torch.nn.functional as F
 import sys
 
-# 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from models.Airbench96 import CifarNet96
+from EVA import modeling_finetune
+from timm.models import create_model
 
 # -----------------------------------------------------------------------------
 # 1. 页面配置
@@ -158,7 +159,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 3. 注入 HTML 自定义导航栏 (纯文字版)
+# 3. 注入 HTML 自定义导航栏
 # -----------------------------------------------------------------------------
 st.markdown("""
 <nav class="custom-navbar">
@@ -189,37 +190,45 @@ CIFAR10_CLASSES = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog
 CIFAR10_CLASSES_CN = ['飞机', '汽车', '鸟', '猫', '鹿', '狗', '青蛙', '马', '船', '卡车']
 
 # 加载模型
+# EVA配置
+EVA_MEAN = (0.48145466, 0.4578275, 0.40821073)
+EVA_STD = (0.26862954, 0.26130258, 0.27577711)
+
 @st.cache_resource
 def load_model():
-    """加载 CifarNet96 模型"""
-    model_path = 'checkpoints/best_airbench96_cifar10.pth'
+    """加载 EVA-02 模型"""
+    model_path = 'checkpoints/best_eva_cifar10.pth'
     if not os.path.exists(model_path):
         return None
     
-    # 创建模型实例
-    model = CifarNet96()
-    
-    # 加载权重
-    checkpoint = torch.load(model_path, map_location='cpu')
-    model.load_state_dict(checkpoint)
+    model = create_model(
+        'eva02_base_patch14_xattn_fusedLN_NaiveSwiGLU_subln_RoPE',
+        pretrained=False, num_classes=10,
+        drop_rate=0.0, drop_path_rate=0.0, attn_drop_rate=0.0, use_mean_pooling=True
+    )
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+    state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
+    model.load_state_dict(state_dict, strict=False)
     model.eval()
     
     return model
 
-def preprocess_image(image, target_size=(32, 32)):
-    """预处理图像"""
+def preprocess_image(image, target_size=(224, 224)):
+    """预处理图像 (EVA需要224x224)"""
     if image.mode != 'RGB': 
         image = image.convert('RGB')
     display_img = image.copy()
-    img_small = image.resize(target_size)
-    img_array = np.array(img_small).astype('float32') / 255.0
+    img_resized = image.resize(target_size, Image.BILINEAR)
+    img_array = np.array(img_resized).astype('float32') / 255.0
     return display_img, img_array
 
 def predict(model, img_array):
-    """使用模型进行预测"""
-    # 转换为 tensor: (H, W, C) -> (1, C, H, W)
+    """使用EVA模型进行预测"""
     img_tensor = torch.from_numpy(img_array).permute(2, 0, 1).unsqueeze(0)
-    img_tensor = img_tensor.half()  # CifarNet96 使用半精度
+    # EVA归一化
+    mean = torch.tensor(EVA_MEAN).view(1, 3, 1, 1)
+    std = torch.tensor(EVA_STD).view(1, 3, 1, 1)
+    img_tensor = (img_tensor - mean) / std
     
     with torch.no_grad():
         outputs = model(img_tensor)
@@ -228,7 +237,7 @@ def predict(model, img_array):
     
     return prediction, proba
 
-# 侧边栏 (去除 Emoji)
+# 侧边栏
 with st.sidebar:
     st.markdown("### 参数设置")
     top_k = st.slider("显示前 K 个结果", 1, 10, 5)
@@ -236,7 +245,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("**系统说明**")
-    st.caption("本系统基于 EVA 模型构建，用于 CIFAR-10 数据集的图像分类任务。\n\n天津科技大学大学 人工智能学院")
+    st.caption("本系统基于 EVA-02 模型构建，用于 CIFAR-10 数据集的图像分类任务。\n\n天津科技大学 人工智能学院")
 
 # 主界面内容
 st.markdown('<h2 style="color:#333; font-weight:600; margin-bottom:10px;">图像分类任务演示</h2>', unsafe_allow_html=True)
@@ -280,7 +289,6 @@ if uploaded_file is not None:
         st.markdown("<br>**概率分布**", unsafe_allow_html=True)
         # 进度条
         for i in np.argsort(proba)[::-1][:top_k]:
-             # 简单的进度显示
              val = float(proba[i])
-             if val > 0.01: # 只显示有意义的
+             if val > conf_threshold:
                  st.progress(val, text=f"{CIFAR10_CLASSES_CN[i]} ({val*100:.1f}%)")
