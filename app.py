@@ -8,6 +8,19 @@ import os
 import torch
 import torch.nn.functional as F
 import sys
+import random
+
+# 设置全局随机种子
+def set_seed(seed=23101204):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(23101204)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from EVA import modeling_finetune
@@ -174,7 +187,7 @@ st.markdown("""
         </div>
     </div>
     <div class="navbar-right">
-        <a class="nav-link" target="_self">帮助文档</a>
+        <a class="nav-link" href="https://github.com/hsy-tust/MLCD_HouShuYang/blob/main/README.md" target="_blank">帮助文档</a>
         <a class="nav-link" target="_self">登录</a>
         <a class="nav-btn-register" target="_self">注册账号</a>
     </div>
@@ -264,7 +277,7 @@ if uploaded_file is not None:
         with st.spinner('正在识别...'):
             prediction, proba = predict(model, img_array)
     else:
-        st.error("未找到模型文件 checkpoints/best_airbench96_cifar10.pth")
+        st.error("未找到模型文件 checkpoints/best_eva_cifar10.pth")
         prediction = 0
         proba = np.zeros(10)
         proba[0] = 1.0
